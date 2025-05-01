@@ -21,7 +21,8 @@ if uploaded_file:
     try:
         # Read full file
         if uploaded_file.name.endswith(".csv"):
-            raw_df = pd.read_csv(uploaded_file)
+            raw_df = pd.read_csv(uploaded_file, encoding="ISO-8859-1")
+
         elif uploaded_file.name.endswith(".xlsx"):
             raw_df = pd.read_excel(uploaded_file, sheet_name=0)
 
