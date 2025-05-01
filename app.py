@@ -19,29 +19,26 @@ uploaded_file = st.file_uploader("Upload your dataset (.csv or .xlsx)", type=["c
 
 if uploaded_file:
     try:
+        # Read full file
         if uploaded_file.name.endswith(".csv"):
-            df = pd.read_csv(uploaded_file, parse_dates=["InvoiceDate"])
+            raw_df = pd.read_csv(uploaded_file)
         elif uploaded_file.name.endswith(".xlsx"):
-            df = pd.read_excel(uploaded_file, sheet_name=0, parse_dates=["InvoiceDate"])
-        st.success("✅ Dataset loaded!")
+            raw_df = pd.read_excel(uploaded_file, sheet_name=0)
+
+        # Only keep InvoiceDate and Quantity
+        df = raw_df[['InvoiceDate', 'Quantity']].copy()
+        df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
+        st.success("✅ Loaded only 'InvoiceDate' and 'Quantity' columns!")
+
     except Exception as e:
-        st.error(f"Error loading file: {e}")
+        st.error(f"❌ File Error: {e}")
         st.stop()
 
-    # Optional cluster filter
-    if 'Cluster' in df.columns:
-        st.sidebar.header("🎯 Segment Filter")
-        selected_cluster = st.sidebar.selectbox("Select Cluster", df['Cluster'].unique())
-        df = df[df['Cluster'] == selected_cluster]
-        st.info(f"Filtered by Cluster {selected_cluster}")
-
-    # Aggregate daily quantity
+    # Daily aggregation
     daily_demand = df.set_index('InvoiceDate').resample('D')['Quantity'].sum().fillna(0)
     data = daily_demand.to_frame(name='Quantity')
     data['is_promo'] = (data.index.weekday == 4).astype(int)
     data['is_holiday'] = data.index.isin(['2010-12-24', '2010-12-25', '2011-01-01']).astype(int)
-
-    # Add lag features
     for lag in range(1, 8):
         data[f'lag_{lag}'] = data['Quantity'].shift(lag)
     data.dropna(inplace=True)
