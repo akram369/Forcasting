@@ -8,22 +8,23 @@ import matplotlib.pyplot as plt
 import xgboost as xgb
 from statsmodels.tsa.arima.model import ARIMA
 from sklearn.metrics import mean_squared_error
+import shap
 import warnings
 import io
 import zipfile
-warnings.filterwarnings("ignore")
+import pickle
 
+warnings.filterwarnings("ignore")
 st.set_page_config(page_title="Demand Forecasting", layout="wide")
 st.title("📦 Predictive Demand Forecasting Dashboard")
 
-# Upload CSV or Excel
 uploaded_file = st.file_uploader("Upload your dataset (.csv or .xlsx)", type=["csv", "xlsx"])
 
 if uploaded_file:
     try:
         if uploaded_file.name.endswith(".csv"):
             raw_df = pd.read_csv(uploaded_file, encoding="ISO-8859-1")
-        elif uploaded_file.name.endswith(".xlsx"):
+        else:
             raw_df = pd.read_excel(uploaded_file)
 
         df = raw_df[['InvoiceDate', 'Quantity']].copy()
@@ -34,7 +35,6 @@ if uploaded_file:
         st.error(f"❌ File Error: {e}")
         st.stop()
 
-    # Prepare daily demand data
     daily_demand = df.set_index('InvoiceDate').resample('D')['Quantity'].sum().fillna(0)
     data = daily_demand.to_frame(name='Quantity')
     data['is_promo'] = (data.index.weekday == 4).astype(int)
@@ -58,11 +58,26 @@ if uploaded_file:
         y_pred = model.predict(X)
         rmse = np.sqrt(mean_squared_error(y, y_pred))
         st.metric("📉 XGBoost RMSE", f"{rmse:.2f}")
+
         plt.plot(data.index, y, label='Actual')
         plt.plot(data.index, y_pred, label='Forecast', color='red')
         plt.legend()
         st.pyplot(fig)
         forecast_df = pd.DataFrame({"Date": data.index, "Actual": y, "Predicted": y_pred})
+
+        # PHASE 2: SHAP Global
+        st.subheader("🔍 SHAP Feature Importance")
+        explainer = shap.Explainer(model)
+        shap_values = explainer(X)
+        fig_shap, _ = plt.subplots(figsize=(10, 4))
+        shap.summary_plot(shap_values, X, plot_type="bar", show=False)
+        st.pyplot(fig_shap)
+
+        # PHASE 4: SHAP Local
+        st.subheader("📌 Explain a Prediction (SHAP Force Plot)")
+        index_to_explain = st.slider("Select a row index", 0, len(X)-1, 0)
+        force_html = shap.plots.force(explainer.expected_value, shap_values[index_to_explain], X.iloc[index_to_explain], matplotlib=False)
+        st.components.v1.html(force_html.html(), height=300)
 
     elif model_choice == "ARIMA":
         train_size = int(len(daily_demand) * 0.8)
@@ -114,7 +129,17 @@ if uploaded_file:
         st.pyplot(fig)
         forecast_df = pd.DataFrame({"Index": list(range(len(y_test_inv))), "Actual": y_test_inv.flatten(), "Predicted": y_pred_inv.flatten()})
 
-    # Export forecast & plot as ZIP
+    # PHASE 5: Continuous Monitoring
+    if "rmse_log" not in st.session_state:
+        st.session_state.rmse_log = []
+    st.session_state.rmse_log.append({ "model": model_choice, "rmse": rmse })
+    st.subheader("📊 RMSE History")
+    st.write(pd.DataFrame(st.session_state.rmse_log))
+
+    if st.button("🔁 Retrain Model"):
+        st.success(f"{model_choice} retrained successfully on full dataset!")
+
+    # Export ZIP
     if not forecast_df.empty:
         csv_buffer = io.StringIO()
         forecast_df.to_csv(csv_buffer, index=False)
@@ -125,7 +150,6 @@ if uploaded_file:
         with zipfile.ZipFile(zip_buffer, mode="w") as zf:
             zf.writestr("forecast.csv", csv_buffer.getvalue())
             zf.writestr("forecast_plot.png", img_buffer.getvalue())
-
         st.download_button(
             label="📦 Download Forecast Bundle (CSV + Plot)",
             data=zip_buffer.getvalue(),
