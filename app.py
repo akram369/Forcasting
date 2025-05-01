@@ -11,46 +11,50 @@ from sklearn.metrics import mean_squared_error
 import warnings
 warnings.filterwarnings("ignore")
 
-# Streamlit setup
 st.set_page_config(page_title="Demand Forecasting", layout="wide")
 st.title("📦 Predictive Demand Forecasting Dashboard")
 
-# Upload CSV
-uploaded_file = st.file_uploader("Upload your cleaned dataset (.csv)", type=["csv"])
+# Upload CSV or Excel
+uploaded_file = st.file_uploader("Upload your dataset (.csv or .xlsx)", type=["csv", "xlsx"])
 
 if uploaded_file:
-    df = pd.read_csv(uploaded_file, parse_dates=['InvoiceDate'])
-    st.success("✅ Dataset loaded!")
+    try:
+        if uploaded_file.name.endswith(".csv"):
+            df = pd.read_csv(uploaded_file, parse_dates=["InvoiceDate"])
+        elif uploaded_file.name.endswith(".xlsx"):
+            df = pd.read_excel(uploaded_file, sheet_name=0, parse_dates=["InvoiceDate"])
+        st.success("✅ Dataset loaded!")
+    except Exception as e:
+        st.error(f"Error loading file: {e}")
+        st.stop()
 
-    # Optional: Filter by cluster
+    # Optional cluster filter
     if 'Cluster' in df.columns:
         st.sidebar.header("🎯 Segment Filter")
-        cluster_options = df['Cluster'].unique()
-        selected_cluster = st.sidebar.selectbox("Select Cluster", cluster_options)
+        selected_cluster = st.sidebar.selectbox("Select Cluster", df['Cluster'].unique())
         df = df[df['Cluster'] == selected_cluster]
-        st.info(f"Showing data for Cluster {selected_cluster}")
+        st.info(f"Filtered by Cluster {selected_cluster}")
 
-    # Resample daily demand
+    # Aggregate daily quantity
     daily_demand = df.set_index('InvoiceDate').resample('D')['Quantity'].sum().fillna(0)
     data = daily_demand.to_frame(name='Quantity')
     data['is_promo'] = (data.index.weekday == 4).astype(int)
     data['is_holiday'] = data.index.isin(['2010-12-24', '2010-12-25', '2011-01-01']).astype(int)
 
-    # Lag features
+    # Add lag features
     for lag in range(1, 8):
         data[f'lag_{lag}'] = data['Quantity'].shift(lag)
     data.dropna(inplace=True)
 
-    # Plot demand
     st.subheader("📊 Daily Demand")
     st.line_chart(daily_demand)
 
-    # Model selection
-    model_choice = st.selectbox("Select Forecasting Model", ["XGBoost", "ARIMA", "LSTM"])
+    # Select model
+    model_choice = st.selectbox("Choose Forecasting Model", ["XGBoost", "ARIMA", "LSTM"])
 
     if model_choice == "XGBoost":
-        X = data.drop('Quantity', axis=1)
-        y = data['Quantity']
+        X = data.drop("Quantity", axis=1)
+        y = data["Quantity"]
         model = xgb.XGBRegressor()
         model.fit(X, y)
         y_pred = model.predict(X)
@@ -92,14 +96,14 @@ if uploaded_file:
                 y.append(data[i+window_size])
             return np.array(X), np.array(y)
 
-        window_size = 30
-        X_seq, y_seq = create_sequences(scaled_qty)
+        window = 30
+        X_seq, y_seq = create_sequences(scaled_qty, window)
         split = int(0.8 * len(X_seq))
         X_train, X_test = X_seq[:split], X_seq[split:]
         y_train, y_test = y_seq[:split], y_seq[split:]
 
         model = Sequential()
-        model.add(LSTM(64, activation='relu', input_shape=(window_size, 1)))
+        model.add(LSTM(64, activation='relu', input_shape=(window, 1)))
         model.add(Dense(1))
         model.compile(optimizer='adam', loss='mse')
         model.fit(X_train, y_train, epochs=20, batch_size=16, verbose=0)
