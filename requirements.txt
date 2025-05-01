@@ -7,3 +7,5 @@ scikit-learn
 tensorflow
 statsmodels
 openpyxl
+shap
+seaborn
