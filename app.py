@@ -5,7 +5,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import xgboost as xgb
+import xgboost
 from statsmodels.tsa.arima.model import ARIMA
 from sklearn.metrics import mean_squared_error
 import shap
@@ -15,6 +15,7 @@ import io
 import zipfile
 import os
 import warnings
+
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="📦 Demand Forecasting", layout="wide")
@@ -63,35 +64,41 @@ if uploaded_file:
 
     # === Model Selection ===
     model_choice = st.selectbox("Select Forecasting Model", ["XGBoost", "ARIMA", "LSTM"])
+    fig, ax = plt.subplots(figsize=(10, 4))
     forecast_df = pd.DataFrame()
 
     if model_choice == "XGBoost":
         st.subheader("🚀 XGBoost Forecasting")
-
+        from xgboost import XGBRegressor
         X = data.drop("Quantity", axis=1).copy()
         y = data["Quantity"].copy()
 
-        model = xgb.XGBRegressor()
-        model.fit(X, y)
-        y_pred = model.predict(X)
+        try:
+            model = XGBRegressor()
+            model.fit(X, y)
+            y_pred = model.predict(X)
 
-        rmse = np.sqrt(mean_squared_error(y, y_pred))
-        st.metric("📉 XGBoost RMSE", f"{rmse:.2f}")
+            rmse = np.sqrt(mean_squared_error(y, y_pred))
+            st.metric("📉 XGBoost RMSE", f"{rmse:.2f}")
 
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(data.index, y, label="Actual")
-        ax.plot(data.index, y_pred, label="Forecast", color="red")
-        ax.legend()
-        st.pyplot(fig)
+            ax.plot(data.index, y, label="Actual")
+            ax.plot(data.index, y_pred, label="Forecast", color="red")
+            ax.legend()
+            st.pyplot(fig)
 
-        st.subheader("🔍 SHAP Summary")
-        explainer = shap.Explainer(model, X)
-        shap_values = explainer(X)
-        shap.summary_plot(shap_values, X, show=False)
-        st.pyplot(plt.gcf())
+            # SHAP Summary
+            st.subheader("🔍 SHAP Summary Plot")
+            explainer = shap.Explainer(model, X)
+            shap_values = explainer(X)
+            st.set_option('deprecation.showPyplotGlobalUse', False)
+            shap.summary_plot(shap_values, X)
+            st.pyplot()
 
-        forecast_df = pd.DataFrame({"Date": data.index, "Actual": y, "Predicted": y_pred})
-        log_model_run("XGBoost", rmse)
+            forecast_df = pd.DataFrame({"Date": data.index, "Actual": y, "Predicted": y_pred})
+            log_model_run("XGBoost", rmse)
+
+        except Exception as e:
+            st.error(f"⚠️ Error during XGBoost modeling: {e}")
 
     elif model_choice == "ARIMA":
         st.subheader("📈 ARIMA Forecasting")
@@ -103,7 +110,6 @@ if uploaded_file:
         forecast.index = test.index
         rmse = np.sqrt(mean_squared_error(test, forecast))
         st.metric("📉 ARIMA RMSE", f"{rmse:.2f}")
-        fig, ax = plt.subplots(figsize=(10, 4))
         ax.plot(train.index, train, label="Train")
         ax.plot(test.index, test, label="Test")
         ax.plot(test.index, forecast, label="Forecast", color="red")
@@ -113,7 +119,7 @@ if uploaded_file:
         log_model_run("ARIMA", rmse)
 
     elif model_choice == "LSTM":
-        st.subheader("🔮 LSTM Forecasting")
+        st.subheader("🤖 LSTM Forecasting")
         scaler = MinMaxScaler()
         scaled_qty = scaler.fit_transform(data[['Quantity']])
         def create_sequences(data, window=30):
@@ -140,17 +146,18 @@ if uploaded_file:
         y_test_inv = scaler.inverse_transform(y_test)
         rmse = np.sqrt(mean_squared_error(y_test_inv, y_pred_inv))
         st.metric("📉 LSTM RMSE", f"{rmse:.2f}")
-        fig, ax = plt.subplots(figsize=(10, 4))
         ax.plot(range(len(y_test_inv)), y_test_inv, label="Actual")
         ax.plot(range(len(y_pred_inv)), y_pred_inv, label="Forecast", color="red")
         ax.legend()
         st.pyplot(fig)
-        forecast_df = pd.DataFrame({"Index": list(range(len(y_test_inv))),
-                                    "Actual": y_test_inv.flatten(),
-                                    "Predicted": y_pred_inv.flatten()})
+        forecast_df = pd.DataFrame({
+            "Index": list(range(len(y_test_inv))),
+            "Actual": y_test_inv.flatten(),
+            "Predicted": y_pred_inv.flatten()
+        })
         log_model_run("LSTM", rmse)
 
-    # === Forecast Export ZIP ===
+    # === Forecast Export ===
     if not forecast_df.empty:
         csv_buf = io.StringIO()
         forecast_df.to_csv(csv_buf, index=False)
@@ -163,8 +170,8 @@ if uploaded_file:
         st.download_button("📦 Download Forecast ZIP", data=zip_buf.getvalue(),
                            file_name="forecast_bundle.zip", mime="application/zip")
 
-# === Phase 5: Model Log Dashboard Tab ===
-st.sidebar.title("📂 Model History")
+# === Phase 5: Model Log Viewer ===
+st.sidebar.title("📂 Model Run History")
 if os.path.exists("model_logs.csv"):
     logs = pd.read_csv("model_logs.csv")
     logs['Timestamp'] = pd.to_datetime(logs['Timestamp'])
