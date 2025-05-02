@@ -9,149 +9,161 @@ import xgboost as xgb
 from statsmodels.tsa.arima.model import ARIMA
 from sklearn.metrics import mean_squared_error
 import shap
+import seaborn as sns
+import os
 import io
 import zipfile
-import warnings
-import datetime
+from datetime import datetime
 
 warnings.filterwarnings("ignore")
+st.set_page_config(page_title="📦 E-Commerce Demand Forecasting", layout="wide")
 
-st.set_page_config(page_title="Demand Forecasting", layout="wide")
-st.title("📦 Predictive Demand Forecasting Dashboard")
+# Initialize logs
+log_file = "model_logs.csv"
+if not os.path.exists(log_file):
+    pd.DataFrame(columns=["Timestamp", "Model", "RMSE"]).to_csv(log_file, index=False)
 
-# Upload CSV or Excel
-uploaded_file = st.file_uploader("Upload your dataset (.csv or .xlsx)", type=["csv", "xlsx"])
+# Sidebar for Navigation
+st.sidebar.title("🔧 Navigation")
+section = st.sidebar.radio("Go to", ["Forecast Dashboard", "📚 Forecast History"])
 
-if uploaded_file:
-    try:
-        if uploaded_file.name.endswith(".csv"):
-            raw_df = pd.read_csv(uploaded_file, encoding="ISO-8859-1")
-        elif uploaded_file.name.endswith(".xlsx"):
-            raw_df = pd.read_excel(uploaded_file)
-        df = raw_df[['InvoiceDate', 'Quantity']].copy()
-        df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
-        st.success("✅ Loaded only 'InvoiceDate' and 'Quantity' columns!")
-    except Exception as e:
-        st.error(f"❌ File Error: {e}")
-        st.stop()
+# Forecast Dashboard
+if section == "Forecast Dashboard":
+    st.title("📦 Predictive Demand Forecasting Dashboard")
 
-    # Prepare data
-    daily_demand = df.set_index('InvoiceDate').resample('D')['Quantity'].sum().fillna(0)
-    data = daily_demand.to_frame(name='Quantity')
-    data['is_promo'] = (data.index.weekday == 4).astype(int)
-    data['is_holiday'] = data.index.isin(['2010-12-24', '2010-12-25', '2011-01-01']).astype(int)
-    for lag in range(1, 8):
-        data[f'lag_{lag}'] = data['Quantity'].shift(lag)
-    data.dropna(inplace=True)
+    uploaded_file = st.file_uploader("Upload your dataset (.csv or .xlsx)", type=["csv", "xlsx"])
 
-    st.subheader("📊 Daily Demand")
-    st.line_chart(daily_demand)
+    if uploaded_file:
+        try:
+            if uploaded_file.name.endswith(".csv"):
+                raw_df = pd.read_csv(uploaded_file, encoding="ISO-8859-1")
+            elif uploaded_file.name.endswith(".xlsx"):
+                raw_df = pd.read_excel(uploaded_file)
 
-    # Model selection
-    model_choice = st.selectbox("Choose Forecasting Model", ["XGBoost", "ARIMA", "LSTM"])
-    forecast_df = pd.DataFrame()
-    fig = plt.figure(figsize=(10, 4))
+            df = raw_df[['InvoiceDate', 'Quantity']].copy()
+            df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
+            st.success("✅ Loaded only 'InvoiceDate' and 'Quantity' columns!")
+        except Exception as e:
+            st.error(f"❌ File Error: {e}")
+            st.stop()
 
-    if model_choice == "XGBoost":
-        X = data.drop("Quantity", axis=1)
-        y = data["Quantity"]
-        model = xgb.XGBRegressor()
-        model.fit(X, y)
-        y_pred = model.predict(X)
-        rmse = np.sqrt(mean_squared_error(y, y_pred))
-        st.metric("📉 XGBoost RMSE", f"{rmse:.2f}")
+        # Phase 1: Data Preparation
+        daily_demand = df.set_index('InvoiceDate').resample('D')['Quantity'].sum().fillna(0)
+        data = daily_demand.to_frame(name='Quantity')
+        data['is_promo'] = (data.index.weekday == 4).astype(int)
+        data['is_holiday'] = data.index.isin(['2010-12-24', '2010-12-25', '2011-01-01']).astype(int)
+        for lag in range(1, 8):
+            data[f'lag_{lag}'] = data['Quantity'].shift(lag)
+        data.dropna(inplace=True)
 
-        forecast_df = pd.DataFrame({"Date": data.index, "Actual": y, "Predicted": y_pred})
-        plt.plot(forecast_df["Date"], forecast_df["Actual"], label='Actual')
-        plt.plot(forecast_df["Date"], forecast_df["Predicted"], label='Forecast', color='red')
-        plt.legend()
-        st.pyplot(fig)
+        st.subheader("📊 Daily Demand")
+        st.line_chart(daily_demand)
 
-        # 🔍 Phase 4: SHAP Explainability
-        st.subheader("🔍 Feature Importance (SHAP)")
-        explainer = shap.Explainer(model)
-        shap_values = explainer(X)
-        st.set_option('deprecation.showPyplotGlobalUse', False)
-        shap.summary_plot(shap_values, X, plot_type="bar")
-        st.pyplot(bbox_inches='tight')
+        model_choice = st.selectbox("Choose Forecasting Model", ["XGBoost", "ARIMA", "LSTM"])
+        forecast_df = pd.DataFrame()
+        fig = plt.figure(figsize=(10, 4))
 
-    elif model_choice == "ARIMA":
-        train_size = int(len(daily_demand) * 0.8)
-        train = daily_demand[:train_size]
-        test = daily_demand[train_size:]
-        model = ARIMA(train, order=(5, 1, 2))
-        model_fit = model.fit()
-        forecast = model_fit.forecast(steps=len(test))
-        forecast.index = test.index
-        rmse = np.sqrt(mean_squared_error(test, forecast))
-        st.metric("📉 ARIMA RMSE", f"{rmse:.2f}")
+        rmse = None
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
-        forecast_df = pd.DataFrame({"Date": test.index, "Actual": test.values, "Predicted": forecast.values})
-        plt.plot(train.index, train, label='Train')
-        plt.plot(test.index, test, label='Actual')
-        plt.plot(test.index, forecast, label='Forecast', color='red')
-        plt.legend()
-        st.pyplot(fig)
+        if model_choice == "XGBoost":
+            X = data.drop("Quantity", axis=1)
+            y = data["Quantity"]
+            model = xgb.XGBRegressor()
+            model.fit(X, y)
+            y_pred = model.predict(X)
+            rmse = np.sqrt(mean_squared_error(y, y_pred))
+            st.metric("📉 XGBoost RMSE", f"{rmse:.2f}")
+            plt.plot(data.index, y, label='Actual')
+            plt.plot(data.index, y_pred, label='Forecast', color='red')
+            plt.legend()
+            st.pyplot(fig)
+            forecast_df = pd.DataFrame({"Date": data.index, "Actual": y, "Predicted": y_pred})
 
-    elif model_choice == "LSTM":
-        scaler = MinMaxScaler()
-        scaled_qty = scaler.fit_transform(data[['Quantity']])
-        def create_sequences(data, window=30):
-            X, y = [], []
-            for i in range(len(data) - window):
-                X.append(data[i:i+window])
-                y.append(data[i+window])
-            return np.array(X), np.array(y)
+            # Phase 4: Explainability
+            explainer = shap.Explainer(model)
+            shap_values = explainer(X)
+            st.subheader("🔍 SHAP Summary")
+            st.set_option('deprecation.showPyplotGlobalUse', False)
+            shap.summary_plot(shap_values, X)
+            st.pyplot(bbox_inches='tight')
 
-        window = 30
-        X_seq, y_seq = create_sequences(scaled_qty, window)
-        split = int(0.8 * len(X_seq))
-        X_train, X_test = X_seq[:split], X_seq[split:]
-        y_train, y_test = y_seq[:split], y_seq[split:]
+        elif model_choice == "ARIMA":
+            train_size = int(len(daily_demand) * 0.8)
+            train = daily_demand[:train_size]
+            test = daily_demand[train_size:]
+            model = ARIMA(train, order=(5, 1, 2))
+            model_fit = model.fit()
+            forecast = model_fit.forecast(steps=len(test))
+            forecast.index = test.index
+            rmse = np.sqrt(mean_squared_error(test, forecast))
+            st.metric("📉 ARIMA RMSE", f"{rmse:.2f}")
+            plt.plot(train.index, train, label='Train')
+            plt.plot(test.index, test, label='Actual')
+            plt.plot(test.index, forecast, label='Forecast', color='red')
+            plt.legend()
+            st.pyplot(fig)
+            forecast_df = pd.DataFrame({"Date": test.index, "Actual": test.values, "Predicted": forecast.values})
 
-        model = Sequential()
-        model.add(LSTM(64, activation='relu', input_shape=(window, 1)))
-        model.add(Dense(1))
-        model.compile(optimizer='adam', loss='mse')
-        model.fit(X_train, y_train, epochs=20, batch_size=16, verbose=0)
+        elif model_choice == "LSTM":
+            scaler = MinMaxScaler()
+            scaled_qty = scaler.fit_transform(data[['Quantity']])
+            def create_sequences(data, window_size=30):
+                X, y = [], []
+                for i in range(len(data) - window_size):
+                    X.append(data[i:i+window_size])
+                    y.append(data[i+window_size])
+                return np.array(X), np.array(y)
 
-        y_pred = model.predict(X_test)
-        y_pred_inv = scaler.inverse_transform(y_pred)
-        y_test_inv = scaler.inverse_transform(y_test)
-        rmse = np.sqrt(mean_squared_error(y_test_inv, y_pred_inv))
-        st.metric("📉 LSTM RMSE", f"{rmse:.2f}")
+            window = 30
+            X_seq, y_seq = create_sequences(scaled_qty, window)
+            split = int(0.8 * len(X_seq))
+            X_train, X_test = X_seq[:split], X_seq[split:]
+            y_train, y_test = y_seq[:split], y_seq[split:]
 
-        forecast_df = pd.DataFrame({
-            "Index": list(range(len(y_test_inv))),
-            "Actual": y_test_inv.flatten(),
-            "Predicted": y_pred_inv.flatten()
-        })
-        plt.plot(forecast_df["Index"], forecast_df["Actual"], label='Actual')
-        plt.plot(forecast_df["Index"], forecast_df["Predicted"], label='Forecast', color='red')
-        plt.legend()
-        st.pyplot(fig)
+            model = Sequential()
+            model.add(LSTM(64, activation='relu', input_shape=(window, 1)))
+            model.add(Dense(1))
+            model.compile(optimizer='adam', loss='mse')
+            model.fit(X_train, y_train, epochs=20, batch_size=16, verbose=0)
 
-    # Phase 1: Download CSV & Plot
-    if not forecast_df.empty:
-        csv_buffer = io.StringIO()
-        forecast_df.to_csv(csv_buffer, index=False)
-        img_buffer = io.BytesIO()
-        fig.savefig(img_buffer, format='png')
-        img_buffer.seek(0)
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, mode="w") as zf:
-            zf.writestr("forecast.csv", csv_buffer.getvalue())
-            zf.writestr("forecast_plot.png", img_buffer.getvalue())
-        st.download_button(
-            label="📦 Download Forecast Bundle (CSV + Plot)",
-            data=zip_buffer.getvalue(),
-            file_name="forecast_bundle.zip",
-            mime="application/zip"
-        )
+            y_pred = model.predict(X_test)
+            y_pred_inv = scaler.inverse_transform(y_pred)
+            y_test_inv = scaler.inverse_transform(y_test)
+            rmse = np.sqrt(mean_squared_error(y_test_inv, y_pred_inv))
+            st.metric("📉 LSTM RMSE", f"{rmse:.2f}")
+            plt.plot(range(len(y_test_inv)), y_test_inv, label='Actual')
+            plt.plot(range(len(y_pred_inv)), y_pred_inv, label='Forecast', color='red')
+            plt.legend()
+            st.pyplot(fig)
+            forecast_df = pd.DataFrame({"Index": list(range(len(y_test_inv))), "Actual": y_test_inv.flatten(), "Predicted": y_pred_inv.flatten()})
 
-    # ✅ Phase 5: Simulated Model Monitoring
-    st.subheader("🔁 Continuous Monitoring & Retraining")
-    if st.button("🔄 Simulate Retraining Now"):
-        retrain_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        st.success(f"Model retrained at {retrain_time}")
-        st.info("📈 This simulates a scheduled retraining process.")
+        # Phase 5: Continuous Logging
+        if rmse:
+            pd.DataFrame([[timestamp, model_choice, rmse]], columns=["Timestamp", "Model", "RMSE"]).to_csv(
+                log_file, mode='a', index=False, header=False)
+
+        # Phase 1 Export CSV + Plot
+        if not forecast_df.empty:
+            csv_buffer = io.StringIO()
+            forecast_df.to_csv(csv_buffer, index=False)
+            img_buffer = io.BytesIO()
+            fig.savefig(img_buffer, format='png')
+            img_buffer.seek(0)
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, mode="w") as zf:
+                zf.writestr("forecast.csv", csv_buffer.getvalue())
+                zf.writestr("forecast_plot.png", img_buffer.getvalue())
+            st.download_button("📦 Download Forecast Bundle (CSV + Plot)", zip_buffer.getvalue(),
+                               file_name=f"{model_choice}_forecast.zip", mime="application/zip")
+
+# Phase 6/7: Forecast History
+elif section == "📚 Forecast History":
+    st.title("📚 Forecast Version History")
+    if os.path.exists(log_file):
+        logs_df = pd.read_csv(log_file)
+        st.dataframe(logs_df.tail(10), use_container_width=True)
+        download_csv = logs_df.to_csv(index=False).encode('utf-8')
+        st.download_button("⬇️ Download Full Log CSV", download_csv, file_name="model_logs.csv", mime="text/csv")
+    else:
+        st.info("No log history found.")
