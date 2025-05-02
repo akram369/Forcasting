@@ -9,3 +9,4 @@ statsmodels
 openpyxl
 shap
 seaborn
+joblib
