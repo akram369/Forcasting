@@ -8,9 +8,11 @@ import matplotlib.pyplot as plt
 import xgboost as xgb
 from statsmodels.tsa.arima.model import ARIMA
 from sklearn.metrics import mean_squared_error
-import warnings
+import shap
 import io
 import zipfile
+import warnings
+import datetime
 
 warnings.filterwarnings("ignore")
 
@@ -26,16 +28,14 @@ if uploaded_file:
             raw_df = pd.read_csv(uploaded_file, encoding="ISO-8859-1")
         elif uploaded_file.name.endswith(".xlsx"):
             raw_df = pd.read_excel(uploaded_file)
-
         df = raw_df[['InvoiceDate', 'Quantity']].copy()
         df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
         st.success("✅ Loaded only 'InvoiceDate' and 'Quantity' columns!")
-
     except Exception as e:
         st.error(f"❌ File Error: {e}")
         st.stop()
 
-    # Prepare daily demand data
+    # Prepare data
     daily_demand = df.set_index('InvoiceDate').resample('D')['Quantity'].sum().fillna(0)
     data = daily_demand.to_frame(name='Quantity')
     data['is_promo'] = (data.index.weekday == 4).astype(int)
@@ -47,6 +47,7 @@ if uploaded_file:
     st.subheader("📊 Daily Demand")
     st.line_chart(daily_demand)
 
+    # Model selection
     model_choice = st.selectbox("Choose Forecasting Model", ["XGBoost", "ARIMA", "LSTM"])
     forecast_df = pd.DataFrame()
     fig = plt.figure(figsize=(10, 4))
@@ -61,12 +62,18 @@ if uploaded_file:
         st.metric("📉 XGBoost RMSE", f"{rmse:.2f}")
 
         forecast_df = pd.DataFrame({"Date": data.index, "Actual": y, "Predicted": y_pred})
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(forecast_df["Date"], forecast_df["Actual"], label='Actual')
-        ax.plot(forecast_df["Date"], forecast_df["Predicted"], label='Forecast', color='red')
-        ax.set_title("XGBoost Forecast")
-        ax.legend()
+        plt.plot(forecast_df["Date"], forecast_df["Actual"], label='Actual')
+        plt.plot(forecast_df["Date"], forecast_df["Predicted"], label='Forecast', color='red')
+        plt.legend()
         st.pyplot(fig)
+
+        # 🔍 Phase 4: SHAP Explainability
+        st.subheader("🔍 Feature Importance (SHAP)")
+        explainer = shap.Explainer(model)
+        shap_values = explainer(X)
+        st.set_option('deprecation.showPyplotGlobalUse', False)
+        shap.summary_plot(shap_values, X, plot_type="bar")
+        st.pyplot(bbox_inches='tight')
 
     elif model_choice == "ARIMA":
         train_size = int(len(daily_demand) * 0.8)
@@ -80,23 +87,20 @@ if uploaded_file:
         st.metric("📉 ARIMA RMSE", f"{rmse:.2f}")
 
         forecast_df = pd.DataFrame({"Date": test.index, "Actual": test.values, "Predicted": forecast.values})
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(train.index, train, label='Train')
-        ax.plot(test.index, test, label='Actual')
-        ax.plot(test.index, forecast, label='Forecast', color='red')
-        ax.set_title("ARIMA Forecast")
-        ax.legend()
+        plt.plot(train.index, train, label='Train')
+        plt.plot(test.index, test, label='Actual')
+        plt.plot(test.index, forecast, label='Forecast', color='red')
+        plt.legend()
         st.pyplot(fig)
 
     elif model_choice == "LSTM":
         scaler = MinMaxScaler()
         scaled_qty = scaler.fit_transform(data[['Quantity']])
-
-        def create_sequences(data, window_size=30):
+        def create_sequences(data, window=30):
             X, y = [], []
-            for i in range(len(data) - window_size):
-                X.append(data[i:i+window_size])
-                y.append(data[i+window_size])
+            for i in range(len(data) - window):
+                X.append(data[i:i+window])
+                y.append(data[i+window])
             return np.array(X), np.array(y)
 
         window = 30
@@ -122,15 +126,12 @@ if uploaded_file:
             "Actual": y_test_inv.flatten(),
             "Predicted": y_pred_inv.flatten()
         })
-
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(forecast_df["Index"], forecast_df["Actual"], label='Actual')
-        ax.plot(forecast_df["Index"], forecast_df["Predicted"], label='Forecast', color='red')
-        ax.set_title("LSTM Forecast")
-        ax.legend()
+        plt.plot(forecast_df["Index"], forecast_df["Actual"], label='Actual')
+        plt.plot(forecast_df["Index"], forecast_df["Predicted"], label='Forecast', color='red')
+        plt.legend()
         st.pyplot(fig)
 
-    # Download ZIP
+    # Phase 1: Download CSV & Plot
     if not forecast_df.empty:
         csv_buffer = io.StringIO()
         forecast_df.to_csv(csv_buffer, index=False)
@@ -141,10 +142,16 @@ if uploaded_file:
         with zipfile.ZipFile(zip_buffer, mode="w") as zf:
             zf.writestr("forecast.csv", csv_buffer.getvalue())
             zf.writestr("forecast_plot.png", img_buffer.getvalue())
-
         st.download_button(
             label="📦 Download Forecast Bundle (CSV + Plot)",
             data=zip_buffer.getvalue(),
             file_name="forecast_bundle.zip",
             mime="application/zip"
         )
+
+    # ✅ Phase 5: Simulated Model Monitoring
+    st.subheader("🔁 Continuous Monitoring & Retraining")
+    if st.button("🔄 Simulate Retraining Now"):
+        retrain_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        st.success(f"Model retrained at {retrain_time}")
+        st.info("📈 This simulates a scheduled retraining process.")
