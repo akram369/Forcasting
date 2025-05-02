@@ -66,31 +66,41 @@ if uploaded_file:
     fig, ax = plt.subplots(figsize=(10, 4))
     forecast_df = pd.DataFrame()
 
-    if model_choice == "XGBoost":
-        X = data.drop("Quantity", axis=1)
-        y = data["Quantity"]
-        model = xgb.XGBRegressor()
-        model.fit(X, y)
-        y_pred = model.predict(X)
-        rmse = np.sqrt(mean_squared_error(y, y_pred))
-        st.metric("📉 XGBoost RMSE", f"{rmse:.2f}")
-        plt.plot(data.index, y, label="Actual")
-        plt.plot(data.index, y_pred, label="Forecast", color="red")
-        ax.legend()
-        st.pyplot(fig)
+        if model_choice == "XGBoost":
+        st.subheader("🚀 XGBoost Forecasting")
 
-        forecast_df = pd.DataFrame({"Date": data.index, "Actual": y, "Predicted": y_pred})
+        X = data.drop("Quantity", axis=1).copy()
+        y = data["Quantity"].copy()
 
-        # === Phase 4: SHAP Explainability ===
-        explainer = shap.Explainer(model)
-        shap_values = explainer(X)
-        st.subheader("🔍 SHAP Summary Plot")
-        st.set_option('deprecation.showPyplotGlobalUse', False)
-        shap.summary_plot(shap_values, X)
-        st.pyplot(bbox_inches='tight')
+        try:
+            model = xgb.XGBRegressor()
+            model.fit(X, y)
+            y_pred = model.predict(X)
 
-        # === Phase 6: Auto Retrain Logging ===
-        log_model_run("XGBoost", rmse)
+            rmse = np.sqrt(mean_squared_error(y, y_pred))
+            st.metric("📉 XGBoost RMSE", f"{rmse:.2f}")
+
+            # Plotting
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.plot(data.index, y, label="Actual")
+            ax.plot(data.index, y_pred, label="Forecast", color="red")
+            ax.legend()
+            st.pyplot(fig)
+
+            # SHAP Summary
+            explainer = shap.Explainer(model, X)
+            shap_values = explainer(X)
+            st.subheader("🔍 SHAP Summary Plot")
+            shap.summary_plot(shap_values, X)
+            st.pyplot(bbox_inches='tight')
+
+            # Logging
+            forecast_df = pd.DataFrame({"Date": data.index, "Actual": y, "Predicted": y_pred})
+            log_model_run("XGBoost", rmse)
+
+        except Exception as e:
+            st.error(f"⚠️ Error during XGBoost modeling: {e}")
+
 
     elif model_choice == "ARIMA":
         train_size = int(len(daily_demand) * 0.8)
