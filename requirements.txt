@@ -10,3 +10,5 @@ openpyxl
 shap
 seaborn
 joblib
+email-validator
+
