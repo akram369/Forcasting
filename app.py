@@ -88,19 +88,23 @@ if uploaded_file:
             ax.legend()
             st.pyplot(fig)
 
-            # === Phase 4: SHAP Summary ===
+            # Phase 4: Interactive Explainability
             st.subheader("🔍 SHAP Summary Plot")
             explainer = shap.Explainer(model, X)
             shap_values = explainer(X)
-            st.set_option('deprecation.showPyplotGlobalUse', False)
             shap.summary_plot(shap_values, X)
             st.pyplot()
 
+            st.subheader("🎯 SHAP Feature Importance")
+            shap_importance = pd.DataFrame({
+                "Feature": X.columns,
+                "SHAP Importance": np.abs(shap_values.values).mean(axis=0)
+            }).sort_values("SHAP Importance", ascending=False)
+            st.dataframe(shap_importance)
+
             forecast_df = pd.DataFrame({"Date": data.index, "Actual": y, "Predicted": y_pred})
             log_model_run("XGBoost", rmse)
-
-            # === Phase 7: Model Versioning ===
-            save_model_version(model, "XGBoost", {"RMSE": round(rmse, 2)})
+            save_model_version(model, "XGBoost", {"rmse": rmse})
 
         except Exception as e:
             st.error(f"⚠️ Error during XGBoost modeling: {e}")
@@ -122,9 +126,7 @@ if uploaded_file:
         st.pyplot(fig)
         forecast_df = pd.DataFrame({"Date": test.index, "Actual": test.values, "Predicted": forecast.values})
         log_model_run("ARIMA", rmse)
-
-        # Phase 7
-        save_model_version(model_fit, "ARIMA", {"RMSE": round(rmse, 2)})
+        save_model_version(model_fit, "ARIMA", {"rmse": rmse})
 
     elif model_choice == "LSTM":
         st.subheader("🤖 LSTM Forecasting")
@@ -164,9 +166,7 @@ if uploaded_file:
             "Predicted": y_pred_inv.flatten()
         })
         log_model_run("LSTM", rmse)
-
-        # Phase 7
-        save_model_version(model, "LSTM", {"RMSE": round(rmse, 2)})
+        save_model_version(model, "LSTM", {"rmse": rmse})
 
     # === Forecast Export ===
     if not forecast_df.empty:
