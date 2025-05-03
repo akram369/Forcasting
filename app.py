@@ -1,6 +1,8 @@
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 from sklearn.preprocessing import MinMaxScaler
+from model_versioning import save_model_version
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -86,7 +88,7 @@ if uploaded_file:
             ax.legend()
             st.pyplot(fig)
 
-            # SHAP Summary
+            # === Phase 4: SHAP Summary ===
             st.subheader("🔍 SHAP Summary Plot")
             explainer = shap.Explainer(model, X)
             shap_values = explainer(X)
@@ -96,6 +98,9 @@ if uploaded_file:
 
             forecast_df = pd.DataFrame({"Date": data.index, "Actual": y, "Predicted": y_pred})
             log_model_run("XGBoost", rmse)
+
+            # === Phase 7: Model Versioning ===
+            save_model_version(model, "XGBoost", {"RMSE": round(rmse, 2)})
 
         except Exception as e:
             st.error(f"⚠️ Error during XGBoost modeling: {e}")
@@ -117,6 +122,9 @@ if uploaded_file:
         st.pyplot(fig)
         forecast_df = pd.DataFrame({"Date": test.index, "Actual": test.values, "Predicted": forecast.values})
         log_model_run("ARIMA", rmse)
+
+        # Phase 7
+        save_model_version(model_fit, "ARIMA", {"RMSE": round(rmse, 2)})
 
     elif model_choice == "LSTM":
         st.subheader("🤖 LSTM Forecasting")
@@ -156,6 +164,9 @@ if uploaded_file:
             "Predicted": y_pred_inv.flatten()
         })
         log_model_run("LSTM", rmse)
+
+        # Phase 7
+        save_model_version(model, "LSTM", {"RMSE": round(rmse, 2)})
 
     # === Forecast Export ===
     if not forecast_df.empty:
