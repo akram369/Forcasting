@@ -18,6 +18,8 @@ import zipfile
 import os
 import warnings
 import json
+import requests
+import streamlit as st
 
 warnings.filterwarnings("ignore")
 
@@ -399,5 +401,37 @@ Threshold: {alert_threshold}%
             st.error(f"Anomaly check error: {e}")
     else:
         st.warning("No champion model available.")
+
+
+st.header("🛰️ Champion Model Forecast (API)")
+
+with st.form("champion_forecast_form"):
+    lag_1 = st.number_input("Lag 1", value=100.0)
+    lag_2 = st.number_input("Lag 2", value=100.0)
+    lag_3 = st.number_input("Lag 3", value=100.0)
+    lag_4 = st.number_input("Lag 4", value=100.0)
+    lag_5 = st.number_input("Lag 5", value=100.0)
+    lag_6 = st.number_input("Lag 6", value=100.0)
+    lag_7 = st.number_input("Lag 7", value=100.0)
+    is_promo = st.selectbox("Is Promo?", [0, 1])
+    is_holiday = st.selectbox("Is Holiday?", [0, 1])
+    submitted = st.form_submit_button("Get Forecast")
+
+    if submitted:
+        payload = {
+            "lag_1": lag_1, "lag_2": lag_2, "lag_3": lag_3,
+            "lag_4": lag_4, "lag_5": lag_5, "lag_6": lag_6,
+            "lag_7": lag_7, "is_promo": is_promo, "is_holiday": is_holiday
+        }
+
+        try:
+            response = requests.post("http://127.0.0.1:8000/predict", json=payload)
+            result = response.json()
+            if "forecast" in result:
+                st.success(f"🔮 Forecast: {result['forecast']:.2f}")
+            else:
+                st.error(f"Error: {result.get('error', 'Unknown error')}")
+        except Exception as e:
+            st.error(f"Connection failed: {e}")
 
 
