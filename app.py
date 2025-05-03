@@ -17,6 +17,7 @@ import io
 import zipfile
 import os
 import warnings
+import json
 
 warnings.filterwarnings("ignore")
 
@@ -88,23 +89,16 @@ if uploaded_file:
             ax.legend()
             st.pyplot(fig)
 
-            # Phase 4: Interactive Explainability
+            # SHAP Summary
             st.subheader("🔍 SHAP Summary Plot")
             explainer = shap.Explainer(model, X)
             shap_values = explainer(X)
-            shap.summary_plot(shap_values, X)
+            shap.summary_plot(shap_values, X, show=False)
             st.pyplot()
-
-            st.subheader("🎯 SHAP Feature Importance")
-            shap_importance = pd.DataFrame({
-                "Feature": X.columns,
-                "SHAP Importance": np.abs(shap_values.values).mean(axis=0)
-            }).sort_values("SHAP Importance", ascending=False)
-            st.dataframe(shap_importance)
 
             forecast_df = pd.DataFrame({"Date": data.index, "Actual": y, "Predicted": y_pred})
             log_model_run("XGBoost", rmse)
-            save_model_version(model, "XGBoost", {"rmse": rmse})
+            save_model_version(model, "XGBoost", rmse)
 
         except Exception as e:
             st.error(f"⚠️ Error during XGBoost modeling: {e}")
@@ -126,7 +120,7 @@ if uploaded_file:
         st.pyplot(fig)
         forecast_df = pd.DataFrame({"Date": test.index, "Actual": test.values, "Predicted": forecast.values})
         log_model_run("ARIMA", rmse)
-        save_model_version(model_fit, "ARIMA", {"rmse": rmse})
+        save_model_version(model_fit, "ARIMA", rmse)
 
     elif model_choice == "LSTM":
         st.subheader("🤖 LSTM Forecasting")
@@ -166,7 +160,7 @@ if uploaded_file:
             "Predicted": y_pred_inv.flatten()
         })
         log_model_run("LSTM", rmse)
-        save_model_version(model, "LSTM", {"rmse": rmse})
+        save_model_version(model, "LSTM", rmse)
 
     # === Forecast Export ===
     if not forecast_df.empty:
@@ -189,3 +183,24 @@ if os.path.exists("model_logs.csv"):
     st.sidebar.dataframe(logs.sort_values("Timestamp", ascending=False), height=300)
 else:
     st.sidebar.info("No model runs logged yet.")
+
+# === Phase 7: Model Version Viewer ===
+st.sidebar.title("🧠 Saved Model Versions")
+version_dir = "model_versions"
+
+if os.path.exists(version_dir):
+    versions = sorted(os.listdir(version_dir))
+    if versions:
+        selected_version = st.sidebar.selectbox("Select Version Folder", versions)
+        meta_path = os.path.join(version_dir, selected_version, "metadata.json")
+        if os.path.exists(meta_path):
+            with open(meta_path, "r") as f:
+                metadata = json.load(f)
+            st.sidebar.markdown("#### Model Metadata")
+            st.sidebar.json(metadata)
+        else:
+            st.sidebar.warning("No metadata found.")
+    else:
+        st.sidebar.info("No saved versions yet.")
+else:
+    st.sidebar.info("Model version directory not found.")
