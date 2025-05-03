@@ -256,4 +256,148 @@ if os.path.exists(version_dir):
             st.warning("⚠️ Metadata missing for one or both selected versions.")
     else:
         st.sidebar.info("Need at least 2 versions for comparison.")
+    # === Phase 9: Champion Deployment & Forecast API ===
+st.sidebar.title("🏆 Champion Model")
+
+# Identify the model version with the lowest RMSE
+champion_meta = None
+if os.path.exists(version_dir):
+    best_rmse = float("inf")
+    for version in os.listdir(version_dir):
+        meta_path = os.path.join(version_dir, version, "metadata.json")
+        if os.path.exists(meta_path):
+            with open(meta_path, "r") as f:
+                meta = json.load(f)
+            if meta["rmse"] < best_rmse:
+                best_rmse = meta["rmse"]
+                champion_meta = {
+                    "version": version,
+                    "model_type": meta["model_type"],
+                    "rmse": meta["rmse"]
+                }
+
+if champion_meta:
+    st.sidebar.success(f"Champion Model: {champion_meta['model_type']} (v{champion_meta['version']})")
+else:
+    st.sidebar.warning("No champion model found.")
+
+# === Simple Forecast API using Champion ===
+st.subheader("🌐 Real-time Forecast with Champion")
+forecast_days = st.slider("Forecast how many days ahead?", 1, 30, 7)
+
+if st.button("🔮 Generate Forecast"):
+    try:
+        version_path = os.path.join(version_dir, champion_meta["version"])
+        model_type = champion_meta["model_type"]
+
+        # Load data again for live prediction
+        base_data = daily_demand.copy()
+        future_dates = pd.date_range(start=base_data.index[-1] + pd.Timedelta(days=1), periods=forecast_days)
+        recent = base_data[-7:].values.tolist()  # for lag features
+
+        if model_type == "XGBoost":
+            model = joblib.load(os.path.join(version_path, "model.pkl"))
+            future_df = pd.DataFrame(index=future_dates)
+            future_df["is_promo"] = (future_df.index.weekday == 4).astype(int)
+            future_df["is_holiday"] = future_df.index.isin(['2010-12-24', '2010-12-25', '2011-01-01']).astype(int)
+
+            for i in range(forecast_days):
+                lags = recent[-7:]
+                row = {
+                    "is_promo": future_df.iloc[i]["is_promo"],
+                    "is_holiday": future_df.iloc[i]["is_holiday"]
+                }
+                for j in range(1, 8):
+                    row[f"lag_{j}"] = lags[-j]
+                input_df = pd.DataFrame([row])
+                pred = model.predict(input_df)[0]
+                recent.append(pred)
+                future_df.iloc[i, future_df.columns.get_loc("is_promo") + 1:] = list(row.values())[1:]
+                future_df.loc[future_df.index[i], "Forecast"] = pred
+
+            st.line_chart(future_df["Forecast"])
+            st.success("✅ Forecast generated using champion model!")
+
+        else:
+            st.warning("Champion forecasting API only supports XGBoost for now.")
+    except Exception as e:
+        st.error(f"Champion forecast error: {e}")
+# === Phase 10: Anomaly Detection & Email Alerts ===
+st.subheader("🚨 Anomaly Detection & Alerting")
+
+send_email = st.toggle("Enable Email Alerts", value=False)
+alert_threshold = st.slider("Anomaly Threshold (%)", 5, 100, 20)
+actual_input = st.number_input("Enter Actual Demand (today)", min_value=0.0)
+
+if st.button("📊 Check for Anomaly"):
+    if champion_meta:
+        version_path = os.path.join(version_dir, champion_meta["version"])
+        model_type = champion_meta["model_type"]
+
+        try:
+            if model_type == "XGBoost":
+                model = joblib.load(os.path.join(version_path, "model.pkl"))
+                recent = daily_demand[-7:].values.tolist()
+
+                # Build today's input
+                today = pd.Timestamp.now().normalize()
+                is_promo = 1 if today.weekday() == 4 else 0
+                is_holiday = 1 if today.strftime("%Y-%m-%d") in ['2010-12-24', '2010-12-25', '2011-01-01'] else 0
+                input_data = {
+                    "is_promo": is_promo,
+                    "is_holiday": is_holiday
+                }
+                for j in range(1, 8):
+                    input_data[f"lag_{j}"] = recent[-j]
+                pred = model.predict(pd.DataFrame([input_data]))[0]
+
+                deviation = abs(pred - actual_input) / max(actual_input, 1) * 100
+                st.metric("Predicted", round(pred, 2))
+                st.metric("Deviation (%)", f"{round(deviation,2)}%")
+
+                if deviation > alert_threshold:
+                    st.error("⚠️ Anomaly Detected!")
+
+                    if send_email:
+                        import smtplib
+                        from email.message import EmailMessage
+
+                        sender_email = st.text_input("Sender Email", "your.email@example.com")
+                        sender_pwd = st.text_input("App Password", type="password")
+                        receiver_email = st.text_input("Recipient Email", "recipient@example.com")
+
+                        msg = EmailMessage()
+                        msg["Subject"] = "Anomaly Alert: Forecast vs Actual"
+                        msg["From"] = sender_email
+                        msg["To"] = receiver_email
+                        body = f"""
+🚨 Anomaly Alert
+
+Model: {model_type} (v{champion_meta['version']})
+Date: {today.strftime('%Y-%m-%d')}
+Forecast: {round(pred, 2)}
+Actual: {round(actual_input, 2)}
+Deviation: {round(deviation, 2)}%
+
+Threshold: {alert_threshold}%
+
+-- AI Forecasting System
+                        """
+                        msg.set_content(body)
+
+                        try:
+                            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+                                smtp.login(sender_email, sender_pwd)
+                                smtp.send_message(msg)
+                            st.success("✅ Alert email sent!")
+                        except Exception as e:
+                            st.error(f"❌ Email failed: {e}")
+                else:
+                    st.success("✅ No anomaly detected.")
+
+        except Exception as e:
+            st.error(f"Anomaly check error: {e}")
+    else:
+        st.warning("No champion model available.")
+
 
