@@ -204,3 +204,56 @@ if os.path.exists(version_dir):
         st.sidebar.info("No saved versions yet.")
 else:
     st.sidebar.info("Model version directory not found.")
+# === Phase 8: Model Comparator & Performance Tracker ===
+st.sidebar.title("📊 Model Comparator")
+
+if os.path.exists(version_dir):
+    version_list = sorted(os.listdir(version_dir))
+    if len(version_list) >= 2:
+        v1 = st.sidebar.selectbox("Compare Version 1", version_list, key="v1")
+        v2 = st.sidebar.selectbox("Compare Version 2", version_list, key="v2")
+
+        def load_metadata(version):
+            path = os.path.join(version_dir, version, "metadata.json")
+            if os.path.exists(path):
+                with open(path, "r") as f:
+                    return json.load(f)
+            return None
+
+        meta1 = load_metadata(v1)
+        meta2 = load_metadata(v2)
+
+        if meta1 and meta2:
+            st.subheader("📊 Model Comparison Dashboard")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown(f"### 🔹 {meta1['model_name']} ({v1})")
+                st.write(f"**RMSE**: {meta1['rmse']}")
+                st.write(f"**Timestamp**: {meta1['timestamp']}")
+                st.json(meta1)
+
+            with col2:
+                st.markdown(f"### 🔸 {meta2['model_name']} ({v2})")
+                st.write(f"**RMSE**: {meta2['rmse']}")
+                st.write(f"**Timestamp**: {meta2['timestamp']}")
+                st.json(meta2)
+
+            st.markdown("### 📈 RMSE Comparison")
+            comparison_df = pd.DataFrame({
+                "Version": [v1, v2],
+                "Model": [meta1["model_name"], meta2["model_name"]],
+                "RMSE": [meta1["rmse"], meta2["rmse"]]
+            })
+            fig_cmp, ax_cmp = plt.subplots()
+            sns.barplot(data=comparison_df, x="Version", y="RMSE", hue="Model", ax=ax_cmp)
+            ax_cmp.set_title("RMSE Comparison of Selected Versions")
+            st.pyplot(fig_cmp)
+
+            best_model = v1 if meta1["rmse"] < meta2["rmse"] else v2
+            st.success(f"🏆 **Champion Model**: {best_model} with RMSE {min(meta1['rmse'], meta2['rmse'])}")
+        else:
+            st.warning("⚠️ Metadata missing for one or both selected versions.")
+    else:
+        st.sidebar.info("Need at least 2 versions for comparison.")
+
