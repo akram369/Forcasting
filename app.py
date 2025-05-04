@@ -1,3 +1,4 @@
+
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 from sklearn.preprocessing import MinMaxScaler
@@ -19,12 +20,16 @@ import os
 import warnings
 import json
 import requests
-import streamlit as st
+import threading
 
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="📦 Demand Forecasting", layout="wide")
 st.title("📈 Predictive Demand Forecasting Dashboard")
+
+# Load holidays from config/holidays.json
+with open("config/holidays.json") as f:
+    holiday_dates = pd.to_datetime(json.load(f)["holidays"])
 
 # === Phase 6: Auto Retraining Log Function ===
 def log_model_run(model_name, rmse):
@@ -59,7 +64,7 @@ if uploaded_file:
     daily_demand = df.set_index('InvoiceDate').resample('D')['Quantity'].sum().fillna(0)
     data = daily_demand.to_frame(name='Quantity')
     data['is_promo'] = (data.index.weekday == 4).astype(int)
-    data['is_holiday'] = data.index.isin(['2010-12-24', '2010-12-25', '2011-01-01']).astype(int)
+    data['is_holiday'] = data.index.isin(holiday_dates).astype(int)
     for lag in range(1, 8):
         data[f'lag_{lag}'] = data['Quantity'].shift(lag)
     data.dropna(inplace=True)
@@ -141,28 +146,34 @@ if uploaded_file:
         X_train, X_test = X_seq[:split], X_seq[split:]
         y_train, y_test = y_seq[:split], y_seq[split:]
 
-        model = Sequential()
-        model.add(LSTM(64, activation='relu', input_shape=(window, 1)))
-        model.add(Dense(1))
-        model.compile(optimizer='adam', loss='mse')
-        model.fit(X_train, y_train, epochs=20, batch_size=16, verbose=0)
+        def train_lstm():
+            model = Sequential()
+            model.add(LSTM(64, activation='relu', input_shape=(window, 1)))
+            model.add(Dense(1))
+            model.compile(optimizer='adam', loss='mse')
+            model.fit(X_train, y_train, epochs=20, batch_size=16, verbose=0)
 
-        y_pred = model.predict(X_test)
-        y_pred_inv = scaler.inverse_transform(y_pred)
-        y_test_inv = scaler.inverse_transform(y_test)
-        rmse = np.sqrt(mean_squared_error(y_test_inv, y_pred_inv))
-        st.metric("📉 LSTM RMSE", f"{rmse:.2f}")
-        ax.plot(range(len(y_test_inv)), y_test_inv, label="Actual")
-        ax.plot(range(len(y_pred_inv)), y_pred_inv, label="Forecast", color="red")
-        ax.legend()
-        st.pyplot(fig)
-        forecast_df = pd.DataFrame({
-            "Index": list(range(len(y_test_inv))),
-            "Actual": y_test_inv.flatten(),
-            "Predicted": y_pred_inv.flatten()
-        })
-        log_model_run("LSTM", rmse)
-        save_model_version(model, "LSTM", rmse)
+            y_pred = model.predict(X_test)
+            y_pred_inv = scaler.inverse_transform(y_pred)
+            y_test_inv = scaler.inverse_transform(y_test)
+            rmse = np.sqrt(mean_squared_error(y_test_inv, y_pred_inv))
+
+            st.metric("📉 LSTM RMSE", f"{rmse:.2f}")
+            ax.plot(range(len(y_test_inv)), y_test_inv, label="Actual")
+            ax.plot(range(len(y_pred_inv)), y_pred_inv, label="Forecast", color="red")
+            ax.legend()
+            st.pyplot(fig)
+            forecast_df = pd.DataFrame({
+                "Index": list(range(len(y_test_inv))),
+                "Actual": y_test_inv.flatten(),
+                "Predicted": y_pred_inv.flatten()
+            })
+            log_model_run("LSTM", rmse)
+            save_model_version(model, "LSTM", rmse)
+
+        # Run LSTM training in a background thread to prevent UI blocking
+        thread = threading.Thread(target=train_lstm)
+        thread.start()
 
     # === Forecast Export ===
     if not forecast_df.empty:
@@ -301,7 +312,7 @@ if st.button("🔮 Generate Forecast"):
             model = joblib.load(os.path.join(version_path, "model.pkl"))
             future_df = pd.DataFrame(index=future_dates)
             future_df["is_promo"] = (future_df.index.weekday == 4).astype(int)
-            future_df["is_holiday"] = future_df.index.isin(['2010-12-24', '2010-12-25', '2011-01-01']).astype(int)
+            future_df["is_holiday"] = future_df.index.isin(holiday_dates).astype(int)
 
             for i in range(forecast_days):
                 lags = recent[-7:]
@@ -331,6 +342,10 @@ send_email = st.toggle("Enable Email Alerts", value=False)
 alert_threshold = st.slider("Anomaly Threshold (%)", 5, 100, 20)
 actual_input = st.number_input("Enter Actual Demand (today)", min_value=0.0)
 
+# Load email credentials from Streamlit secrets or environment variables
+EMAIL_USER = st.secrets.get("email_user") or os.getenv("EMAIL_USER")
+EMAIL_PASS = st.secrets.get("email_pass") or os.getenv("EMAIL_PASS")
+
 if st.button("📊 Check for Anomaly"):
     if champion_meta:
         version_path = os.path.join(version_dir, champion_meta["version"])
@@ -344,7 +359,7 @@ if st.button("📊 Check for Anomaly"):
                 # Build today's input
                 today = pd.Timestamp.now().normalize()
                 is_promo = 1 if today.weekday() == 4 else 0
-                is_holiday = 1 if today.strftime("%Y-%m-%d") in ['2010-12-24', '2010-12-25', '2011-01-01'] else 0
+                is_holiday = 1 if today.strftime("%Y-%m-%d") in holiday_dates else 0
                 input_data = {
                     "is_promo": is_promo,
                     "is_holiday": is_holiday
@@ -355,122 +370,6 @@ if st.button("📊 Check for Anomaly"):
 
                 deviation = abs(pred - actual_input) / max(actual_input, 1) * 100
                 st.metric("Predicted", round(pred, 2))
-                st.metric("Deviation (%)", f"{round(deviation,2)}%")
-
-                if deviation > alert_threshold:
-                    st.error("⚠️ Anomaly Detected!")
-
-                    if send_email:
-                        import smtplib
-                        from email.message import EmailMessage
-
-                        sender_email = st.text_input("Sender Email", "your.email@example.com")
-                        sender_pwd = st.text_input("App Password", type="password")
-                        receiver_email = st.text_input("Recipient Email", "recipient@example.com")
-
-                        msg = EmailMessage()
-                        msg["Subject"] = "Anomaly Alert: Forecast vs Actual"
-                        msg["From"] = sender_email
-                        msg["To"] = receiver_email
-                        body = f"""
-🚨 Anomaly Alert
-
-Model: {model_type} (v{champion_meta['version']})
-Date: {today.strftime('%Y-%m-%d')}
-Forecast: {round(pred, 2)}
-Actual: {round(actual_input, 2)}
-Deviation: {round(deviation, 2)}%
-
-Threshold: {alert_threshold}%
-
--- AI Forecasting System
-                        """
-                        msg.set_content(body)
-
-                        try:
-                            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-                                smtp.login(sender_email, sender_pwd)
-                                smtp.send_message(msg)
-                            st.success("✅ Alert email sent!")
-                        except Exception as e:
-                            st.error(f"❌ Email failed: {e}")
-                else:
-                    st.success("✅ No anomaly detected.")
-
         except Exception as e:
             st.error(f"Anomaly check error: {e}")
-    else:
-        st.warning("No champion model available.")
-
-
-st.header("🛰️ Champion Model Forecast (API)")
-
-with st.form("champion_forecast_form"):
-    lag_1 = st.number_input("Lag 1", value=100.0)
-    lag_2 = st.number_input("Lag 2", value=100.0)
-    lag_3 = st.number_input("Lag 3", value=100.0)
-    lag_4 = st.number_input("Lag 4", value=100.0)
-    lag_5 = st.number_input("Lag 5", value=100.0)
-    lag_6 = st.number_input("Lag 6", value=100.0)
-    lag_7 = st.number_input("Lag 7", value=100.0)
-    is_promo = st.selectbox("Is Promo?", [0, 1])
-    is_holiday = st.selectbox("Is Holiday?", [0, 1])
-    submitted = st.form_submit_button("Get Forecast")
-
-    if submitted:
-        payload = {
-            "lag_1": lag_1, "lag_2": lag_2, "lag_3": lag_3,
-            "lag_4": lag_4, "lag_5": lag_5, "lag_6": lag_6,
-            "lag_7": lag_7, "is_promo": is_promo, "is_holiday": is_holiday
-        }
-
-        try:
-            response = requests.post("http://127.0.0.1:8000/predict", json=payload)
-            result = response.json()
-            if "forecast" in result:
-                st.success(f"🔮 Forecast: {result['forecast']:.2f}")
-            else:
-                st.error(f"Error: {result.get('error', 'Unknown error')}")
-        except Exception as e:
-            st.error(f"Connection failed: {e}")
-
-import requests
-
-st.markdown("## 🛰️ Phase 11: Champion Model Forecast via REST API")
-
-with st.form("champion_forecast_form"):
-    st.markdown("Enter features for the champion model to forecast:")
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        lag_1 = st.number_input("Lag 1", value=100.0)
-        lag_4 = st.number_input("Lag 4", value=100.0)
-        is_promo = st.selectbox("Is Promo?", [0, 1])
-    with col2:
-        lag_2 = st.number_input("Lag 2", value=100.0)
-        lag_5 = st.number_input("Lag 5", value=100.0)
-        is_holiday = st.selectbox("Is Holiday?", [0, 1])
-    with col3:
-        lag_3 = st.number_input("Lag 3", value=100.0)
-        lag_6 = st.number_input("Lag 6", value=100.0)
-        lag_7 = st.number_input("Lag 7", value=100.0)
-
-    submitted = st.form_submit_button("Get Champion Forecast")
-
-    if submitted:
-        payload = {
-            "lag_1": lag_1, "lag_2": lag_2, "lag_3": lag_3,
-            "lag_4": lag_4, "lag_5": lag_5, "lag_6": lag_6,
-            "lag_7": lag_7, "is_promo": is_promo, "is_holiday": is_holiday
-        }
-
-        try:
-            response = requests.post("http://127.0.0.1:8000/predict", json=payload)
-            result = response.json()
-            if "forecast" in result:
-                st.success(f"🔮 Forecast from Champion Model: **{result['forecast']:.2f}**")
-            else:
-                st.error(f"❌ Error: {result.get('error', 'Unknown error')}")
-        except Exception as e:
-            st.error(f"🚫 API Connection failed: {e}")
 
