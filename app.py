@@ -26,6 +26,25 @@ import json
 import requests
 import threading
 
+
+# Champion model path
+CHAMPION_MODEL_PATH = "models/champion_model.pkl"
+
+def get_champion_prediction(input_features):
+    if not os.path.exists(CHAMPION_MODEL_PATH):
+        return {"error": "Champion model not found."}
+
+    model = joblib.load(CHAMPION_MODEL_PATH)
+
+    forecast = model.predict([input_features])[0]
+
+    return {
+        "forecast": float(forecast),
+        "model": "Champion XGBoost",
+        "status": "success"
+    }
+
+
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="📦 Demand Forecasting", layout="wide")
