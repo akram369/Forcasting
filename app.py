@@ -100,8 +100,11 @@ if uploaded_file:
             st.subheader("🔍 SHAP Summary Plot")
             explainer = shap.Explainer(model, X)
             shap_values = explainer(X)
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots()
             shap.summary_plot(shap_values, X, show=False)
-            st.pyplot()
+            st.pyplot(fig)
+            plt.clf()
 
             forecast_df = pd.DataFrame({"Date": data.index, "Actual": y, "Predicted": y_pred})
             log_model_run("XGBoost", rmse)
