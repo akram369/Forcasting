@@ -1,13 +1,7 @@
-
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 from sklearn.preprocessing import MinMaxScaler
 from model_versioning import save_model_version
-from api_service import get_champion_prediction
-
-
-
-
 import streamlit as st
 import pandas as pd
 import numpy as np
