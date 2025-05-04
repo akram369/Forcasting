@@ -207,8 +207,8 @@ if uploaded_file:
             log_model_run("LSTM", rmse)
             save_model_version(model, "LSTM", rmse)
     
-        thread = threading.Thread(target=train_lstm)
-        thread.start()
+        train_lstm()
+
 
 
     # === Forecast Export ===
