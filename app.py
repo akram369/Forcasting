@@ -28,7 +28,7 @@ st.set_page_config(page_title="📦 Demand Forecasting", layout="wide")
 st.title("📈 Predictive Demand Forecasting Dashboard")
 
 # Load holidays from config/holidays.json
-with open("config/holidays.json") as f:
+with open("holidays.json") as f:
     holiday_dates = pd.to_datetime(json.load(f)["holidays"])
 
 # === Phase 6: Auto Retraining Log Function ===
