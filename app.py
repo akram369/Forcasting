@@ -150,50 +150,66 @@ if uploaded_file:
         save_model_version(model_fit, "ARIMA", rmse)
 
     elif model_choice == "LSTM":
-        st.subheader("🤖 LSTM Forecasting")
-        scaler = MinMaxScaler()
-        scaled_qty = scaler.fit_transform(data[['Quantity']])
-        def create_sequences(data, window=30):
-            X, y = [], []
-            for i in range(len(data) - window):
-                X.append(data[i:i+window])
-                y.append(data[i+window])
-            return np.array(X), np.array(y)
+    st.subheader("🤖 LSTM Forecasting")
 
-        window = 30
-        X_seq, y_seq = create_sequences(scaled_qty, window)
-        split = int(0.8 * len(X_seq))
-        X_train, X_test = X_seq[:split], X_seq[split:]
-        y_train, y_test = y_seq[:split], y_seq[split:]
+    scaler = MinMaxScaler()
+    scaled_qty = scaler.fit_transform(data[['Quantity']])
 
-        def train_lstm():
-            model = Sequential()
-            model.add(LSTM(64, activation='relu', input_shape=(window, 1)))
-            model.add(Dense(1))
-            model.compile(optimizer='adam', loss='mse')
-            model.fit(X_train, y_train, epochs=20, batch_size=16, verbose=0)
+    def create_sequences(data, window=30):
+        X, y = [], []
+        for i in range(len(data) - window):
+            X.append(data[i:i+window])
+            y.append(data[i+window])
+        return np.array(X), np.array(y)
 
-            y_pred = model.predict(X_test)
-            y_pred_inv = scaler.inverse_transform(y_pred)
-            y_test_inv = scaler.inverse_transform(y_test)
-            rmse = np.sqrt(mean_squared_error(y_test_inv, y_pred_inv))
+    window = 30
+    X_seq, y_seq = create_sequences(scaled_qty, window)
+    split = int(0.8 * len(X_seq))
+    X_train, X_test = X_seq[:split], X_seq[split:]
+    y_train, y_test = y_seq[:split], y_seq[split:]
 
-            st.metric("📉 LSTM RMSE", f"{rmse:.2f}")
-            ax.plot(range(len(y_test_inv)), y_test_inv, label="Actual")
-            ax.plot(range(len(y_pred_inv)), y_pred_inv, label="Forecast", color="red")
-            ax.legend()
-            st.pyplot(fig)
-            forecast_df = pd.DataFrame({
-                "Index": list(range(len(y_test_inv))),
-                "Actual": y_test_inv.flatten(),
-                "Predicted": y_pred_inv.flatten()
-            })
-            log_model_run("LSTM", rmse)
-            save_model_version(model, "LSTM", rmse)
+    # Reshape for LSTM input
+    X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
+    X_test = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
 
-        # Run LSTM training in a background thread to prevent UI blocking
-        thread = threading.Thread(target=train_lstm)
-        thread.start()
+    # For plotting later
+    test_dates = data.index[window + split:]
+
+    def train_lstm():
+        model = Sequential()
+        model.add(LSTM(64, activation='relu', input_shape=(window, 1)))
+        model.add(Dense(1))
+        model.compile(optimizer='adam', loss='mse')
+        model.fit(X_train, y_train, epochs=20, batch_size=16, verbose=0)
+
+        y_pred = model.predict(X_test)
+        y_pred_inv = scaler.inverse_transform(y_pred)
+        y_test_inv = scaler.inverse_transform(y_test)
+
+        rmse = np.sqrt(mean_squared_error(y_test_inv, y_pred_inv))
+        st.metric("📉 LSTM RMSE", f"{rmse:.2f}")
+
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(test_dates, y_test_inv, label="Actual")
+        ax.plot(test_dates, y_pred_inv, label="Forecast", color="red")
+        ax.set_title("LSTM Forecast vs Actual")
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Quantity")
+        ax.legend()
+        st.pyplot(fig)
+
+        forecast_df = pd.DataFrame({
+            "Date": test_dates,
+            "Actual": y_test_inv.flatten(),
+            "Predicted": y_pred_inv.flatten()
+        })
+
+        log_model_run("LSTM", rmse)
+        save_model_version(model, "LSTM", rmse)
+
+    thread = threading.Thread(target=train_lstm)
+    thread.start()
+
 
     # === Forecast Export ===
     if not forecast_df.empty:
