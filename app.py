@@ -297,47 +297,31 @@ if champion_meta:
 else:
     st.sidebar.warning("No champion model found.")
 
-# === Simple Forecast API using Champion ===
-st.subheader("🌐 Real-time Forecast with Champion")
-forecast_days = st.slider("Forecast how many days ahead?", 1, 30, 7)
+with st.expander("🌐 Real-time Forecast with Champion"):
+    st.subheader("Forecast using the current champion model")
+    forecast_days = st.number_input("Forecast how many days ahead?", min_value=1, max_value=30, value=7)
 
-if st.button("🔮 Generate Forecast"):
-    try:
-        version_path = os.path.join(version_dir, champion_meta["version"])
-        model_type = champion_meta["model_type"]
+    if st.button("Get Champion Forecast"):
+        with st.spinner("Calling champion forecast API..."):
+            try:
+                from api_service import get_champion_forecast
+                result = get_champion_forecast(forecast_days)
 
-        # Load data again for live prediction
-        base_data = daily_demand.copy()
-        future_dates = pd.date_range(start=base_data.index[-1] + pd.Timedelta(days=1), periods=forecast_days)
-        recent = base_data[-7:].values.tolist()  # for lag features
+                if result and isinstance(result, dict) and "forecast" in result:
+                    forecast_df = pd.DataFrame(result["forecast"])
+                    st.success("Champion forecast generated successfully.")
+                    st.write(forecast_df)
 
-        if model_type == "XGBoost":
-            model = joblib.load(os.path.join(version_path, "model.pkl"))
-            future_df = pd.DataFrame(index=future_dates)
-            future_df["is_promo"] = (future_df.index.weekday == 4).astype(int)
-            future_df["is_holiday"] = future_df.index.isin(holiday_dates).astype(int)
+                    fig, ax = plt.subplots()
+                    forecast_df.plot(x="date", y="forecast", ax=ax, title="Champion Model Forecast")
+                    st.pyplot(fig)
 
-            for i in range(forecast_days):
-                lags = recent[-7:]
-                row = {
-                    "is_promo": future_df.iloc[i]["is_promo"],
-                    "is_holiday": future_df.iloc[i]["is_holiday"]
-                }
-                for j in range(1, 8):
-                    row[f"lag_{j}"] = lags[-j]
-                input_df = pd.DataFrame([row])
-                pred = model.predict(input_df)[0]
-                recent.append(pred)
-                future_df.iloc[i, future_df.columns.get_loc("is_promo") + 1:] = list(row.values())[1:]
-                future_df.loc[future_df.index[i], "Forecast"] = pred
+                else:
+                    st.warning("No forecast returned. Please check if the champion model is set or if the API is reachable.")
 
-            st.line_chart(future_df["Forecast"])
-            st.success("✅ Forecast generated using champion model!")
-
-        else:
-            st.warning("Champion forecasting API only supports XGBoost for now.")
-    except Exception as e:
-        st.error(f"Champion forecast error: {e}")
+            except Exception as e:
+                st.error(f"Champion forecast error: {str(e)}")
+                st.exception(e)
 # === Phase 10: Anomaly Detection & Email Alerts ===
 st.subheader("🚨 Anomaly Detection & Alerting")
 
