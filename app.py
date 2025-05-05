@@ -333,33 +333,32 @@ if champion_meta:
 else:
     st.sidebar.warning("No champion model found.")
 
-with st.subheader("🌐 Real-time Forecast with Champion")
+with st.subheader("🌐 Real-time Forecast with Champion"):
+    forecast_days = st.number_input("Forecast how many days ahead?", min_value=1, max_value=30, value=5)
 
-forecast_days = st.number_input("Forecast how many days ahead?", min_value=1, max_value=30, value=5)
+    if st.button("Forecast with Champion"):
+        try:
+            recent = daily_demand[-7:].values.tolist()
+            today = pd.Timestamp.now().normalize()
+            is_promo = 1 if today.weekday() == 4 else 0
+            is_holiday = 1 if today.strftime("%Y-%m-%d") in holiday_dates else 0
 
-if st.button("Forecast with Champion"):
-    try:
-        recent = daily_demand[-7:].values.tolist()
-        today = pd.Timestamp.now().normalize()
-        is_promo = 1 if today.weekday() == 4 else 0
-        is_holiday = 1 if today.strftime("%Y-%m-%d") in holiday_dates else 0
+            input_data = {
+                "is_promo": is_promo,
+                "is_holiday": is_holiday
+            }
+            for j in range(1, 8):
+                input_data[f"lag_{j}"] = recent[-j]
 
-        input_data = {
-            "is_promo": is_promo,
-            "is_holiday": is_holiday
-        }
-        for j in range(1, 8):
-            input_data[f"lag_{j}"] = recent[-j]
+            result = get_champion_prediction(input_data, champion_meta["version"])
 
-        result = get_champion_prediction(input_data, champion_meta["version"])
+            if result.get("status") == "success":
+                st.success(f"Champion forecast for {forecast_days} days ahead: {result['forecast']:.2f}")
+            else:
+                st.error(result.get("error", "Unknown error."))
 
-        if result.get("status") == "success":
-            st.success(f"Champion forecast for {forecast_days} days ahead: {result['forecast']:.2f}")
-        else:
-            st.error(result.get("error", "Unknown error."))
-
-    except Exception as e:
-        st.error(f"Error during forecasting: {e}")
+        except Exception as e:
+            st.error(f"Error during forecasting: {e}")
 
 # === Phase 10: Anomaly Detection & Email Alerts ===
 st.subheader("🚨 Anomaly Detection & Alerting")
@@ -398,4 +397,3 @@ if st.button("📊 Check for Anomaly"):
                 st.metric("Predicted", round(pred, 2))
         except Exception as e:
             st.error(f"Anomaly check error: {e}")
-
