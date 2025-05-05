@@ -3,7 +3,7 @@ from tensorflow.keras.layers import LSTM, Dense
 from sklearn.preprocessing import MinMaxScaler
 from model_versioning import save_model_version
 
-from utils.data_loader import load_data
+
 from utils.forecasting_utils import generate_features
 import streamlit as st
 import pandas as pd
