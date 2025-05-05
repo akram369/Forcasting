@@ -2,6 +2,9 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 from sklearn.preprocessing import MinMaxScaler
 from model_versioning import save_model_version
+from utils.model_monitor import log_model_run
+from utils.data_loader import load_data
+from utils.forecasting_utils import generate_features
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -50,20 +53,6 @@ st.title("📈 Predictive Demand Forecasting Dashboard")
 # Load holidays from config/holidays.json
 with open("config/holidays.json") as f:
     holiday_dates = pd.to_datetime(json.load(f)["holidays"])
-
-# === Phase 6: Auto Retraining Log Function ===
-def log_model_run(model_name, rmse):
-    log_path = "model_logs.csv"
-    entry = pd.DataFrame([{
-        "Model": model_name,
-        "RMSE": round(rmse, 2),
-        "Timestamp": pd.Timestamp.now()
-    }])
-    if os.path.exists(log_path):
-        existing = pd.read_csv(log_path)
-        pd.concat([existing, entry]).to_csv(log_path, index=False)
-    else:
-        entry.to_csv(log_path, index=False)
 
 # === File Upload ===
 uploaded_file = st.file_uploader("Upload CSV or Excel (InvoiceDate & Quantity required)", type=["csv", "xlsx"])
@@ -238,7 +227,8 @@ else:
 
 # === Phase 7: Model Version Viewer ===
 st.sidebar.title("🧠 Saved Model Versions")
-version_dir = "model_versions"
+version_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_versions")
+os.makedirs(version_dir, exist_ok=True)
 
 if os.path.exists(version_dir):
     versions = sorted(os.listdir(version_dir))
@@ -253,9 +243,10 @@ if os.path.exists(version_dir):
         else:
             st.sidebar.warning("No metadata found.")
     else:
-        st.sidebar.info("No saved versions yet.")
+        st.sidebar.info("No saved versions yet. Train a model to create versions.")
 else:
-    st.sidebar.info("Model version directory not found.")
+    st.sidebar.info("Model version directory not found. Train a model to create the directory.")
+
 # === Phase 8: Model Comparator & Performance Tracker ===
 st.sidebar.title("📊 Model Comparator")
 
@@ -307,8 +298,9 @@ if os.path.exists(version_dir):
         else:
             st.warning("⚠️ Metadata missing for one or both selected versions.")
     else:
-        st.sidebar.info("Need at least 2 versions for comparison.")
-    # === Phase 9: Champion Deployment & Forecast API ===
+        st.sidebar.info("Need at least 2 versions for comparison. Train more models.")
+
+# === Phase 9: Champion Deployment & Forecast API ===
 st.sidebar.title("🏆 Champion Model")
 
 # Identify the model version with the lowest RMSE
@@ -332,7 +324,7 @@ if champion_meta:
     st.sidebar.success(f"Champion Model: {champion_meta['model_type']} (v{champion_meta['version']})")
     st.sidebar.info(f"RMSE: {champion_meta['rmse']:.2f}")
 else:
-    st.sidebar.warning("No champion model found.")
+    st.sidebar.warning("No champion model found. Train a model to create a champion.")
 
 with st.subheader("🌐 Real-time Forecast with Champion"):
     forecast_days = st.number_input("Forecast how many days ahead?", min_value=1, max_value=30, value=5)
@@ -397,7 +389,31 @@ if st.button("📊 Check for Anomaly"):
                     input_data[f"lag_{j}"] = recent[-j]
                 pred = model.predict(pd.DataFrame([input_data]))[0]
 
-                deviation = abs(pred - actual_input) / max(actual_input, 1) * 100
-                st.metric("Predicted", round(pred, 2))
+            elif model_type == "ARIMA":
+                model = joblib.load(os.path.join(version_path, "model.pkl"))
+                pred = model.forecast(steps=1)[0]
+
+            elif model_type == "LSTM":
+                model = joblib.load(os.path.join(version_path, "model.pkl"))
+                scaler = joblib.load(os.path.join(version_path, "scaler.pkl"))
+                recent = daily_demand[-30:].values.reshape(-1, 1)
+                scaled_recent = scaler.transform(recent)
+                pred = model.predict(scaled_recent.reshape(1, 30, 1))
+                pred = scaler.inverse_transform(pred)[0][0]
+
+            # Calculate deviation and check for anomaly
+            deviation = abs(pred - actual_input) / max(actual_input, 1) * 100
+            st.metric("Predicted", round(pred, 2))
+            st.metric("Deviation", f"{deviation:.2f}%")
+
+            if deviation > alert_threshold:
+                st.warning(f"⚠️ Anomaly Detected! Deviation: {deviation:.2f}%")
+                if send_email and EMAIL_USER and EMAIL_PASS:
+                    st.info("Email alert would be sent here (email sending not implemented)")
+            else:
+                st.success(f"✅ No anomaly detected. Deviation: {deviation:.2f}%")
+
         except Exception as e:
             st.error(f"Anomaly check error: {e}")
+    else:
+        st.error("No champion model available for anomaly detection")
