@@ -22,21 +22,24 @@ import threading
 
 
 # Champion model path
-CHAMPION_MODEL_PATH = "models/champion_model.pkl"
+CHAMPION_MODEL_PATH = "model_versions/{version}/model.pkl"
 
-def get_champion_prediction(input_features):
-    if not os.path.exists(CHAMPION_MODEL_PATH):
+def get_champion_prediction(input_features: dict, version: str):
+    model_path = CHAMPION_MODEL_PATH.format(version=version)
+    if not os.path.exists(model_path):
         return {"error": "Champion model not found."}
 
-    model = joblib.load(CHAMPION_MODEL_PATH)
+    model = joblib.load(model_path)
 
-    forecast = model.predict([input_features])[0]
+    input_df = pd.DataFrame([input_features])
+    forecast = model.predict(input_df)[0]
 
     return {
         "forecast": float(forecast),
         "model": "Champion XGBoost",
         "status": "success"
     }
+
 
 
 warnings.filterwarnings("ignore")
@@ -330,31 +333,34 @@ if champion_meta:
 else:
     st.sidebar.warning("No champion model found.")
 
-with st.expander("🌐 Real-time Forecast with Champion"):
-    st.subheader("Forecast using the current champion model")
-    forecast_days = st.number_input("Forecast how many days ahead?", min_value=1, max_value=30, value=7)
+with st.subheader("🌐 Real-time Forecast with Champion")
 
-    if st.button("Get Champion Forecast"):
-        with st.spinner("Calling champion forecast API..."):
-            try:
-                from api_service import get_champion_forecast
-                result = get_champion_forecast(forecast_days)
+forecast_days = st.number_input("Forecast how many days ahead?", min_value=1, max_value=30, value=5)
 
-                if result and isinstance(result, dict) and "forecast" in result:
-                    forecast_df = pd.DataFrame(result["forecast"])
-                    st.success("Champion forecast generated successfully.")
-                    st.write(forecast_df)
+if st.button("Forecast with Champion"):
+    try:
+        recent = daily_demand[-7:].values.tolist()
+        today = pd.Timestamp.now().normalize()
+        is_promo = 1 if today.weekday() == 4 else 0
+        is_holiday = 1 if today.strftime("%Y-%m-%d") in holiday_dates else 0
 
-                    fig, ax = plt.subplots()
-                    forecast_df.plot(x="date", y="forecast", ax=ax, title="Champion Model Forecast")
-                    st.pyplot(fig)
+        input_data = {
+            "is_promo": is_promo,
+            "is_holiday": is_holiday
+        }
+        for j in range(1, 8):
+            input_data[f"lag_{j}"] = recent[-j]
 
-                else:
-                    st.warning("No forecast returned. Please check if the champion model is set or if the API is reachable.")
+        result = get_champion_prediction(input_data, champion_meta["version"])
 
-            except Exception as e:
-                st.error(f"Champion forecast error: {str(e)}")
-                st.exception(e)
+        if result.get("status") == "success":
+            st.success(f"Champion forecast for {forecast_days} days ahead: {result['forecast']:.2f}")
+        else:
+            st.error(result.get("error", "Unknown error."))
+
+    except Exception as e:
+        st.error(f"Error during forecasting: {e}")
+
 # === Phase 10: Anomaly Detection & Email Alerts ===
 st.subheader("🚨 Anomaly Detection & Alerting")
 
