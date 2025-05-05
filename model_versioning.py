@@ -4,49 +4,47 @@ from datetime import datetime
 import joblib
 
 # Define base paths
-MODEL_DIR = "models"
-METADATA_PATH = "metadata/version_log.json"
-os.makedirs(MODEL_DIR, exist_ok=True)
-os.makedirs("metadata", exist_ok=True)
+VERSION_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_versions")
+os.makedirs(VERSION_DIR, exist_ok=True)
 
-# Load or initialize metadata
-def load_version_log():
-    if os.path.exists(METADATA_PATH):
-        with open(METADATA_PATH, "r") as f:
-            return json.load(f)
-    return {}
+def save_model_version(model, model_name, rmse):
+    try:
+        # Create version directory
+        version = f"v{len(os.listdir(VERSION_DIR)) + 1}"
+        version_path = os.path.join(VERSION_DIR, version)
+        os.makedirs(version_path, exist_ok=True)
 
-def save_version_log(log):
-    with open(METADATA_PATH, "w") as f:
-        json.dump(log, f, indent=4)
+        # Save model
+        model_path = os.path.join(version_path, "model.pkl")
+        joblib.dump(model, model_path)
 
-# Save a new model version
-def save_model_version(model, model_type, metrics):
-    log = load_version_log()
-    model_folder = os.path.join(MODEL_DIR, model_type)
-    os.makedirs(model_folder, exist_ok=True)
+        # Save metadata
+        metadata = {
+            "model_name": model_name,
+            "rmse": float(rmse),
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "version": version
+        }
+        
+        with open(os.path.join(version_path, "metadata.json"), "w") as f:
+            json.dump(metadata, f, indent=4)
 
-    version_id = f"v{len(log.get(model_type, [])) + 1}"
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    filename = f"model_{version_id}_{timestamp}.pkl"
-    filepath = os.path.join(model_folder, filename)
+        return version
+    except Exception as e:
+        print(f"Error saving model version: {e}")
+        return None
 
-    joblib.dump(model, filepath)
-
-    entry = {
-        "version": version_id,
-        "timestamp": timestamp,
-        "filepath": filepath,
-        "metrics": metrics
-    }
-    log.setdefault(model_type, []).append(entry)
-    save_version_log(log)
-    return version_id, filepath
-
-# Load specific model version
-def load_model_version(model_type, version_id):
-    log = load_version_log()
-    for entry in log.get(model_type, []):
-        if entry["version"] == version_id:
-            return joblib.load(entry["filepath"])
-    return None
+def load_model_version(version):
+    try:
+        version_path = os.path.join(VERSION_DIR, version)
+        if not os.path.exists(version_path):
+            return None
+        
+        model_path = os.path.join(version_path, "model.pkl")
+        if not os.path.exists(model_path):
+            return None
+        
+        return joblib.load(model_path)
+    except Exception as e:
+        print(f"Error loading model version: {e}")
+        return None
