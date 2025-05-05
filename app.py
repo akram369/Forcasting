@@ -320,16 +320,17 @@ if os.path.exists(version_dir):
         if os.path.exists(meta_path):
             with open(meta_path, "r") as f:
                 meta = json.load(f)
-            if meta["rmse"] < best_rmse:
-                best_rmse = meta["rmse"]
-                champion_meta = {
-                    "version": version,
-                    "model_type": meta["model_type"],
-                    "rmse": meta["rmse"]
-                }
+                if meta["rmse"] < best_rmse:
+                    best_rmse = meta["rmse"]
+                    champion_meta = {
+                        "version": version,
+                        "model_type": meta["model_name"],
+                        "rmse": meta["rmse"]
+                    }
 
 if champion_meta:
     st.sidebar.success(f"Champion Model: {champion_meta['model_type']} (v{champion_meta['version']})")
+    st.sidebar.info(f"RMSE: {champion_meta['rmse']:.2f}")
 else:
     st.sidebar.warning("No champion model found.")
 
