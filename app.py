@@ -2,9 +2,6 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 from sklearn.preprocessing import MinMaxScaler
 from model_versioning import save_model_version
-
-
-from utils.forecasting_utils import generate_features
 import streamlit as st
 import pandas as pd
 import numpy as np
